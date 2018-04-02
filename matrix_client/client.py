@@ -16,21 +16,33 @@ from .api import MatrixHttpApi
 from .errors import MatrixRequestError, MatrixUnexpectedResponse
 from .room import Room
 from .user import User
-from enum import Enum
 from threading import Thread
 from time import sleep
 from uuid import uuid4
 import logging
 import sys
+import warnings
 
 logger = logging.getLogger(__name__)
 
 
 # Cache constants used when instantiating Matrix Client to specify level of caching
-class CACHE(Enum):
-    NONE = -1
-    SOME = 0
-    ALL = 1
+class Enum(object):
+    def __init__(self, **kwargs):
+        self._values = kwargs.values()
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def __contains__(self, item):
+        return item in self._values
+
+
+class Cache(Enum):
+    def __init__(self):
+        Enum.__init__(self, NONE=-1, SOME=0, ALL=1)
+
+
+CACHE = Cache()
 
 
 class MatrixClient(object):
@@ -121,7 +133,7 @@ class MatrixClient(object):
         self.invite_listeners = []
         self.left_listeners = []
         self.ephemeral_listeners = []
-        if isinstance(cache_level, CACHE):
+        if cache_level in CACHE:
             self._cache_level = cache_level
         else:
             self._cache_level = CACHE.ALL
@@ -200,8 +212,6 @@ class MatrixClient(object):
         Args:
             username (str): Account username
             password (str): Account password
-            limit (int): Deprecated. How many messages to return when syncing.
-                This will be replaced by a filter API in a later release.
 
         Returns:
             str: Access token
@@ -398,9 +408,12 @@ class MatrixClient(object):
             timeout_ms (int): How long to poll the Home Server for before
                retrying.
         """
+        warnings.warn("listen_for_events is deprecated. Use _sync instead.",
+                      DeprecationWarning)
         self._sync(timeout_ms)
 
-    def listen_forever(self, timeout_ms=30000, exception_handler=None):
+    def listen_forever(self, timeout_ms=30000, exception_handler=None,
+                       bad_sync_timeout=5):
         """ Keep listening for events forever.
 
         Args:
@@ -409,23 +422,27 @@ class MatrixClient(object):
             exception_handler (func(exception)): Optional exception handler
                function which can be used to handle exceptions in the caller
                thread.
+            aad_sync_timeout (int): Base time to wait after an error before
+                retrying. Will be increased according to exponential backoff.
         """
-        bad_sync_timeout = 5000
+        _bad_sync_timeout = bad_sync_timeout
         self.should_listen = True
         while (self.should_listen):
             try:
                 self._sync(timeout_ms)
-                bad_sync_timeout = 5
+                _bad_sync_timeout = bad_sync_timeout
             except MatrixRequestError as e:
                 logger.warning("A MatrixRequestError occured during sync.")
                 if e.code >= 500:
                     logger.warning("Problem occured serverside. Waiting %i seconds",
                                    bad_sync_timeout)
                     sleep(bad_sync_timeout)
-                    bad_sync_timeout = min(bad_sync_timeout * 2,
-                                           self.bad_sync_timeout_limit)
+                    _bad_sync_timeout = min(_bad_sync_timeout * 2,
+                                            self.bad_sync_timeout_limit)
+                elif exception_handler is not None:
+                    exception_handler(e)
                 else:
-                    raise e
+                    raise
             except Exception as e:
                 logger.exception("Exception thrown during sync")
                 if exception_handler is not None:
@@ -497,7 +514,7 @@ class MatrixClient(object):
         etype = state_event["type"]
 
         # Don't keep track of room state if caching turned off
-        if self._cache_level.value >= 0:
+        if self._cache_level >= 0:
             if etype == "m.room.name":
                 current_room.name = state_event["content"].get("name", None)
             elif etype == "m.room.canonical_alias":
