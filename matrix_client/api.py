@@ -14,8 +14,7 @@
 # limitations under the License.
 
 import json
-import warnings
-from requests import Session, RequestException
+import requests
 from time import time, sleep
 from .errors import MatrixError, MatrixRequestError, MatrixHttpLibError
 
@@ -51,7 +50,6 @@ class MatrixHttpApi(object):
         self.identity = identity
         self.txn_id = 0
         self.validate_cert = True
-        self.session = Session()
 
     def initial_sync(self, limit=1):
         """
@@ -64,7 +62,6 @@ class MatrixHttpApi(object):
         Args:
             limit (int): The limit= param to provide.
         """
-        warnings.warn("initial_sync is deprecated. Use sync instead.", DeprecationWarning)
         return self._send("GET", "/initialSync", query_params={"limit": limit})
 
     def sync(self, since=None, timeout_ms=30000, filter=None,
@@ -195,8 +192,6 @@ class MatrixHttpApi(object):
             from_token (str): The 'from' query parameter.
             timeout (int): Optional. The 'timeout' query parameter.
         """
-        warnings.warn("event_stream is deprecated. Use event_stream instead.",
-                      DeprecationWarning)
         path = "/events"
         return self._send(
             "GET", path, query_params={
@@ -650,16 +645,17 @@ class MatrixHttpApi(object):
         if headers["Content-Type"] == "application/json" and content is not None:
             content = json.dumps(content)
 
+        response = None
         while True:
             try:
-                response = self.session.request(
+                response = requests.request(
                     method, endpoint,
                     params=query_params,
                     data=content,
                     headers=headers,
                     verify=self.validate_cert
                 )
-            except RequestException as e:
+            except requests.exceptions.RequestException as e:
                 raise MatrixHttpLibError(e, method, endpoint)
 
             if response.status_code == 429:
